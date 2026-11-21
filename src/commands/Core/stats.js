@@ -6,7 +6,7 @@ import { InteractionHelper } from '../../utils/interactionHelper.js';
 export default {
     data: new SlashCommandBuilder()
     .setName("stats")
-    .setDescription("View bot statistics"),
+    .setDescription("View bot statistics and uptime"),
 
   async execute(interaction) {
     try {
@@ -19,7 +19,16 @@ export default {
       );
       const nodeVersion = process.version;
 
+      let remaining = Math.floor(interaction.client.uptime / 1000);
+      const days = Math.floor(remaining / 86400);
+      remaining %= 86400;
+      const hours = Math.floor(remaining / 3600);
+      remaining %= 3600;
+      const minutes = Math.floor(remaining / 60);
+      const uptime = `${days}d ${hours}h ${minutes}m`;
+
       const embed = createEmbed({ title: "System Statistics", description: "Real-time performance metrics." }).addFields(
+        { name: "Uptime", value: uptime, inline: true },
         { name: "Servers", value: `${totalGuilds}`, inline: true },
         { name: "Users", value: `${totalMembers}`, inline: true },
         { name: "Node.js", value: `${nodeVersion}`, inline: true },

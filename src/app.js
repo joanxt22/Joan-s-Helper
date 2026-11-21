@@ -8,6 +8,8 @@ import config from './config/application.js';
 import { initializeDatabase } from './utils/database.js';
 import { getGuildConfig } from './services/config/guildConfig.js';
 import { getServerCounters, saveServerCounters, updateCounter } from './services/serverstatsService.js';
+import { pollNews } from './services/news/newsPoster.js';
+import { awardVoiceXp } from './services/leveling/voiceXpService.js';
 import { logger, startupLog, shutdownLog } from './utils/logger.js';
 import { checkBirthdays } from './services/birthdayService.js';
 import { checkGiveaways } from './services/giveawayService.js';
@@ -251,6 +253,8 @@ class TitanBot extends Client {
     cron.schedule('0 6 * * *', runSafeTask('birthday_check', () => checkBirthdays(this)));
     cron.schedule('* * * * *', runSafeTask('giveaway_check', () => checkGiveaways(this)));
     cron.schedule('*/15 * * * *', runSafeTask('counter_update', () => this.updateAllCounters()));
+    cron.schedule('*/30 * * * *', runSafeTask('news_poll', () => pollNews(this)));
+    cron.schedule('* * * * *', runSafeTask('voice_xp', () => awardVoiceXp(this)));
   }
 
   async updateAllCounters() {

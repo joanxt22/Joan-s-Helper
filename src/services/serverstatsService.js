@@ -21,8 +21,30 @@ export const COUNTER_TYPE_CONFIG = {
     label: 'Bots Only',
     baseName: 'Bots',
     emoji: '🤖'
+  },
+  boosts: {
+    label: 'Server Boosts',
+    baseName: 'Boosts',
+    emoji: '🚀'
+  },
+  channels: {
+    label: 'Channels',
+    baseName: 'Channels',
+    emoji: '💬'
+  },
+  roles: {
+    label: 'Roles',
+    baseName: 'Roles',
+    emoji: '🏷️'
+  },
+  in_voice: {
+    label: 'Members In Voice',
+    baseName: 'In Voice',
+    emoji: '🔊'
   }
 };
+
+const GUILD_CATEGORY_CHANNEL_TYPE = 4;
 
 function getCounterConfig(type) {
   return COUNTER_TYPE_CONFIG[type] || {
@@ -44,8 +66,12 @@ export function getCounterEmoji(type) {
   return getCounterConfig(type).emoji;
 }
 
-export function formatCounterChannelName(type, count) {
-  const template = botConfig.counters?.defaults?.channelName || '{name}-{count}';
+export function formatCounterChannelName(type, count, isVoice = false) {
+  // Voice channel names may contain spaces and colons ("Members: 42"); text channel names
+  // are normalised by Discord to lowercase-with-hyphens, so they keep the hyphen format.
+  const template = isVoice
+    ? (botConfig.counters?.defaults?.voiceChannelName || '{name}: {count}')
+    : (botConfig.counters?.defaults?.channelName || '{name}-{count}');
   const baseName = getCounterBaseName(type);
   return template
     .replaceAll('{name}', baseName)
@@ -67,11 +93,15 @@ export function getCounterActionMessage(action, values = {}) {
 export async function getGuildCounterStats(guild) {
   let memberCollection = guild.members.cache;
 
-  try {
-    memberCollection = await guild.members.fetch();
-  } catch (error) {
-    if (process.env.NODE_ENV !== 'production') {
-      logger.debug(`Failed to fetch all guild members for ${guild.id}, using cache only`, error);
+  // The member cache is kept current by gateway events (GuildMembers intent), so only
+  // do the expensive full fetch when the cache is known to be incomplete.
+  if (typeof guild.memberCount === 'number' && memberCollection.size < guild.memberCount) {
+    try {
+      memberCollection = await guild.members.fetch();
+    } catch (error) {
+      if (process.env.NODE_ENV !== 'production') {
+        logger.debug(`Failed to fetch all guild members for ${guild.id}, using cache only`, error);
+      }
     }
   }
 
@@ -86,7 +116,38 @@ export async function getGuildCounterStats(guild) {
   };
 }
 
+/**
+ * Counts that come straight from the guild cache (no member fetch needed).
+ * Returns null for types that need member data or that are unknown.
+ */
+export function getGuildScopedCount(guild, type) {
+  switch (type) {
+    case 'boosts':
+      return guild.premiumSubscriptionCount ?? 0;
+    case 'channels':
+      return guild.channels.cache.filter(
+        (channel) => channel.type !== GUILD_CATEGORY_CHANNEL_TYPE && !(typeof channel.isThread === 'function' && channel.isThread()),
+      ).size;
+    case 'roles':
+      // @everyone is not a real role to members
+      return Math.max(guild.roles.cache.size - 1, 0);
+    case 'in_voice':
+      return guild.voiceStates.cache.filter((voiceState) => Boolean(voiceState.channelId)).size;
+    default:
+      return null;
+  }
+}
+
 export async function getCounterCount(guild, type) {
+  const scoped = getGuildScopedCount(guild, type);
+  if (scoped !== null) {
+    return scoped;
+  }
+
+  if (!['members', 'bots', 'members_only'].includes(type)) {
+    return null;
+  }
+
   const stats = await getGuildCounterStats(guild);
 
   switch (type) {
@@ -172,7 +233,7 @@ export async function updateCounter(client, guild, counter) {
       logger.debug(`Base name: "${baseName}", Current name: "${channel.name}"`);
     }
     
-    const newName = formatCounterChannelName(type, count);
+    const newName = formatCounterChannelName(type, count, typeof channel.isVoiceBased === 'function' && channel.isVoiceBased());
     if (process.env.NODE_ENV !== 'production') {
       logger.debug(`New name would be: "${newName}"`);
     }

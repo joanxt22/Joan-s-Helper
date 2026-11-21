@@ -148,6 +148,10 @@ export function createGiveawayEmbed(giveaway, status, winners = []) {
                 { name: '👥 Entries', value: giveaway.participants?.length?.toString() || '0', inline: true }
             );
 
+        if (giveaway.requiredRoleId) {
+            embed.addFields({ name: '🔒 Requires', value: `<@&${giveaway.requiredRoleId}>`, inline: false });
+        }
+
         if (isEnded) {
             const winnerDisplay = winners.length > 0 
                 ? winners.map(id => `<@${id}>`).join(', ')

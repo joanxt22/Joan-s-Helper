@@ -52,6 +52,10 @@ export const giveawayJoinHandler = {
                 const participants = giveaway.participants || [];
                 const userId = interaction.user.id;
 
+                if (giveaway.requiredRoleId && !interaction.member?.roles?.cache?.has(giveaway.requiredRoleId)) {
+                    return replyUserError(interaction, { type: ErrorTypes.PERMISSION, message: `You need the <@&${giveaway.requiredRoleId}> role to enter this giveaway.` });
+                }
+
                 if (participants.includes(userId)) {
                     return replyUserError(interaction, { type: ErrorTypes.UNKNOWN, message: 'You have already entered this giveaway! 🎉' });
                 }

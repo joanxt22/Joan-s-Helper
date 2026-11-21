@@ -8,8 +8,14 @@ import { handleList } from './modules/serverstats_list.js';
 import { handleUpdate } from './modules/serverstats_update.js';
 import { handleDelete } from './modules/serverstats_delete.js';
 
+import { COUNTER_TYPE_CONFIG } from '../../services/serverstatsService.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 import { replyUserError, ErrorTypes } from '../../utils/errorHandler.js';
+const COUNTER_TYPE_CHOICES = Object.entries(COUNTER_TYPE_CONFIG).map(([value, config]) => ({
+    name: config.label,
+    value,
+}));
+
 export default {
     data: new SlashCommandBuilder()
         .setName("serverstats")
@@ -24,11 +30,7 @@ export default {
                         .setName("type")
                         .setDescription("The type of statistics to track")
                         .setRequired(true)
-                        .addChoices(
-                            { name: "members + bots", value: "members" },
-                            { name: "members only", value: "members_only" },
-                            { name: "bots only", value: "bots" }
-                        )
+                        .addChoices(...COUNTER_TYPE_CHOICES)
                 )
                 .addStringOption(option =>
                     option
@@ -68,11 +70,7 @@ export default {
                         .setName("type")
                         .setDescription("The new tracker type")
                         .setRequired(false)
-                        .addChoices(
-                            { name: "members + bots", value: "members" },
-                            { name: "members only", value: "members_only" },
-                            { name: "bots only", value: "bots" }
-                        )
+                        .addChoices(...COUNTER_TYPE_CHOICES)
                 )
         )
         .addSubcommand(subcommand =>

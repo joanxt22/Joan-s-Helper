@@ -8,12 +8,35 @@
 
 ## Table of Contents
 
+- [What's New In This Build](#whats-new-in-this-build)
 - [Features Overview](#features-overview)
 - [Quick Setup](#quick-setup)
 - [Manual Installation Steps](#manual-installation-steps)
 - [Support Server](https://discord.gg/QnWNz2dKCE)
 - [Required Bot Intents](#bot-intents)
 - [Contributing](CONTRIBUTING.md)
+
+## What's New In This Build
+
+Everything below is already wired in; there is nothing extra to enable except where noted.
+
+| Feature | Commands | Notes |
+|---|---|---|
+| **Welcome image cards** | `/welcome background` (upload an image), `/welcome card`, `/welcome preview`, `/welcome remove-background` | The uploaded image is resized and stored in the database (Discord attachment links expire). Needs `npm install` for `@napi-rs/canvas`. Without it the normal embed is sent. |
+| **Counting game** | `/count setup`, `settings`, `status`, `stats`, `leaderboard`, `reset`, `disable` | Chat is ignored unless it looks like a number (turn on `strict` to change that). Shared "saves" let the group survive mistakes, one is earned every 100 counts. Reacts with ✅, celebrates every 100. |
+| **Giveaways** | `/giveaway start`, `end`, `reroll`, `delete`, `list` | Replaces `gcreate`/`gend`/`gdelete`/`greroll`. `start` has an optional `required_role`. |
+| **Server stats channels** | `/serverstats create` | New types: boosts, channels, roles, members in voice. Voice stat channels are now locked so nobody can join them. |
+| **Voice XP** | `/level voice` | Everyone in a call earns XP every minute (default 8-12). Deafened people, bots and the AFK channel never earn; needs 2+ people in the call unless you turn that off. Uses your existing ignored roles, blacklist and multiplier. |
+| **Fun games** | `/fun` with `8ball`, `rps`, `tictactoe`, `trivia`, `wouldyourather`, `ship`, `action`, `joke`, `choose`, `rate` | Trivia, would-you-rather and jokes live in `src/config/fun/`, add your own. |
+| **Cats** | `/cat setup`, `inventory`, `leaderboard`, `spawn`, `disable` | Cats appear as people chat in the chosen channel; first click catches. 5 rarities. |
+| **Server tree** | `/tree view`, `water`, `leaderboard` | One shared tree per server, water it once an hour each. |
+| **Movies** | `/movie recommend`, `suggest`, `list`, `remove`, `wheel` | `recommend` picks from `src/config/movies/catalog.js`. Members add their own picks with `suggest`; `remove` and `wheel` are admin only (Manage Server, change `ADMIN_PERMISSION` in `movie.js` for full Administrator). |
+| **Game news** | `/news latest`, `setup`, `disable` | Fortnite, Roblox and Minecraft from official X accounts. **Needs `X_BEARER_TOKEN`** (reading posts requires a paid X API plan) and you should confirm the handles in `src/config/news/sources.js`. RSS/Atom feeds can be added there too and need no key. |
+| **Music search** | `/play` | Suggestions appear as you type (`Title - Artist - 3:54`), and picking one queues that exact track. |
+
+**Command limit:** Discord allows 100 slash commands per bot and this build uses 99. `/support` was removed and `/uptime` now lives in `/stats` to make room.
+
+**Tests:** run `npm install` then `npm test`.
 
 <a name="features-overview"></a>
 ## Features Overview

@@ -1,7 +1,7 @@
 import { getColor } from '../../../config/bot.js';
 import { PermissionFlagsBits } from 'discord.js';
 import { createEmbed } from '../../../utils/embeds.js';
-import { getServerCounters, saveServerCounters, getCounterEmoji as getCounterTypeEmoji, getCounterTypeLabel, getGuildCounterStats } from '../../../services/serverstatsService.js';
+import { getServerCounters, saveServerCounters, getCounterEmoji as getCounterTypeEmoji, getCounterTypeLabel, getGuildCounterStats, getGuildScopedCount } from '../../../services/serverstatsService.js';
 import { logger } from '../../../utils/logger.js';
 
 import { InteractionHelper } from '../../../utils/interactionHelper.js';
@@ -86,8 +86,8 @@ export async function handleList(interaction, client) {
                 continue;
             }
 
-            const currentCount = getCurrentCount(stats, counter.type);
-            const status = channel.name.includes(':') ? '✅ Active' : '⚠️ Not Updated';
+            const currentCount = getCurrentCount(stats, counter.type, guild);
+            const status = channel.name.endsWith(String(currentCount)) ? '✅ Up to date' : '⚠️ Waiting for next update';
             
             embed.addFields({
                 name: `${getCounterTypeEmoji(counter.type)} Counter #${i + 1} - ${channel.name}`,
@@ -100,7 +100,7 @@ export async function handleList(interaction, client) {
             name: "**Statistics**",
             value: `**Total Counters:** ${validCounters.length}\n**Active Counters:** ${validCounters.filter(c => {
                 const channel = guild.channels.cache.get(c.channelId);
-                return channel && channel.name.includes(':');
+                return Boolean(channel);
             }).length}\n**Next Update:** <t:${Math.floor(Date.now() / 1000) + 900}:R>`,
             inline: false
         });
@@ -132,7 +132,7 @@ function getCounterEmoji(type) {
     return getCounterTypeEmoji(type);
 }
 
-function getCurrentCount(stats, type) {
+function getCurrentCount(stats, type, guild) {
     switch (type) {
         case "members":
             return stats.totalCount;
@@ -141,6 +141,6 @@ function getCurrentCount(stats, type) {
         case "members_only":
             return stats.humanCount;
         default:
-            return 0;
+            return getGuildScopedCount(guild, type) ?? 0;
     }
 }

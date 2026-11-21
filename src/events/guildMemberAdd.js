@@ -1,8 +1,9 @@
-import { Events, EmbedBuilder, PermissionFlagsBits } from 'discord.js';
+import { Events, EmbedBuilder, PermissionFlagsBits, AttachmentBuilder } from 'discord.js';
 import { getColor, botConfig } from '../config/bot.js';
 import { getGuildConfig } from '../services/config/guildConfig.js';
 import { getWelcomeConfig } from '../utils/database.js';
 import { formatWelcomeMessage } from '../utils/welcome.js';
+import { getWelcomeBackground, renderWelcomeCard } from '../services/welcomeCardService.js';
 import { logEvent, EVENT_TYPES } from '../services/loggingService.js';
 import { getServerCounters, updateCounter } from '../services/serverstatsService.js';
 import { setBirthday as dbSetBirthday } from '../utils/database.js';
@@ -45,34 +46,63 @@ export default {
                     ? formatWelcomeMessage(welcomeConfig.welcomeEmbed.footer, formatData)
                     : `Welcome to ${guild.name}!`;
 
+                // Optional welcome image card (avatar + custom background). Any failure
+                // here falls back to the normal embed so a join is never left unwelcomed.
+                let cardFile = null;
+                if (welcomeConfig.cardEnabled && permissions.has(PermissionFlagsBits.AttachFiles)) {
+                    try {
+                        const background = await getWelcomeBackground(member.client, guild.id);
+                        const png = await renderWelcomeCard({
+                            user,
+                            guild,
+                            background,
+                            title: formatWelcomeMessage(welcomeConfig.cardTitle || 'WELCOME', formatData),
+                        });
+                        if (png) {
+                            cardFile = new AttachmentBuilder(png, { name: 'welcome-card.png' });
+                        }
+                    } catch (cardError) {
+                        logger.warn(`Welcome card failed for guild ${guild.id}, falling back to embed:`, cardError);
+                    }
+                }
+
                 const canEmbed = permissions.has(PermissionFlagsBits.EmbedLinks);
 
                 if (!canEmbed) {
                     await channel.send({
-                        content: messageContent || welcomeMessage
+                        content: messageContent ? `${messageContent} ${welcomeMessage}` : welcomeMessage,
+                        files: cardFile ? [cardFile] : []
                     });
                 } else {
                     const embed = new EmbedBuilder()
                         .setColor(welcomeConfig.welcomeEmbed?.color || getColor('success'))
                         .setTitle(embedTitle)
                         .setDescription(welcomeMessage)
-                        .setThumbnail(user.displayAvatarURL())
-                        .addFields(
-                            { name: 'User', value: `${user.tag} (${user.id})`, inline: true },
-                            { name: 'Member Count', value: guild.memberCount.toString(), inline: true }
-                        )
                         .setTimestamp()
                         .setFooter({ text: embedFooter });
-                    
-                    if (welcomeConfig.welcomeImage) {
-                        embed.setImage(welcomeConfig.welcomeImage);
-                    } else if (welcomeConfig.welcomeEmbed?.image?.url) {
-                        embed.setImage(welcomeConfig.welcomeEmbed.image.url);
+
+                    if (cardFile) {
+                        // The card already shows the avatar, name and member number.
+                        embed.setImage('attachment://welcome-card.png');
+                    } else {
+                        embed
+                            .setThumbnail(user.displayAvatarURL())
+                            .addFields(
+                                { name: 'User', value: `${user.tag} (${user.id})`, inline: true },
+                                { name: 'Member Count', value: guild.memberCount.toString(), inline: true }
+                            );
+
+                        if (welcomeConfig.welcomeImage) {
+                            embed.setImage(welcomeConfig.welcomeImage);
+                        } else if (welcomeConfig.welcomeEmbed?.image?.url) {
+                            embed.setImage(welcomeConfig.welcomeEmbed.image.url);
+                        }
                     }
-                    
-                    await channel.send({ 
+
+                    await channel.send({
                         content: messageContent,
-                        embeds: [embed] 
+                        embeds: [embed],
+                        files: cardFile ? [cardFile] : []
                     });
                 }
             }

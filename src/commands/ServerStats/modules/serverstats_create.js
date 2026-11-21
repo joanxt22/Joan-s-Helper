@@ -46,6 +46,11 @@ export async function handleCreate(interaction, client) {
             name: baseChannelName,
             type: targetChannelType,
             parent: category.id,
+            // Stat channels are display-only: nobody should join or type in them.
+            permissionOverwrites: [{
+                id: guild.roles.everyone.id,
+                deny: [targetChannelType === ChannelType.GuildVoice ? PermissionFlagsBits.Connect : PermissionFlagsBits.SendMessages]
+            }],
             reason: `Counter channel created by ${interaction.user.tag}`
         });
 

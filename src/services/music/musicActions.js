@@ -13,6 +13,7 @@ import {
     getQueuePageSize,
 } from './musicEmbeds.js';
 import { refreshPlayerMessage } from './playerHandler.js';
+import { takeSuggestedTrack } from './playAutocomplete.js';
 
 const YOUTUBE_URL_PATTERN = /(?:youtube\.com|youtu\.be)/i;
 const PLAYER_CONNECT_TIMEOUT_MS = 12_000;
@@ -206,10 +207,15 @@ export async function playQuery(client, interaction, query) {
 
     const { player, guildData } = await ensurePlayer(client, interaction);
 
-    const result = await client.riffy.resolve({
-        query,
-        requester: interaction.user,
-    });
+    // If this text is a suggestion the person just picked from the autocomplete list, queue that
+    // exact track instead of searching again (a second search could return another version).
+    const picked = takeSuggestedTrack(interaction.user.id, query);
+    const result = picked
+        ? { loadType: 'track', tracks: [picked] }
+        : await client.riffy.resolve({
+            query,
+            requester: interaction.user,
+        });
 
     const { loadType, tracks, playlistInfo } = result;
 

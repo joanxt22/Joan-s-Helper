@@ -11,7 +11,12 @@ import { wrapServiceBoundary } from '../../utils/errorHandler.js';
  * Award XP to a member. Returns null when XP is skipped (disabled/invalid amount).
  * Throws on storage or unexpected failures.
  */
-export const addXp = wrapServiceBoundary(async function addXp(client, guild, member, xpToAdd) {
+/**
+ * `options.source` may be 'voice' for call XP. Voice XP must not touch `lastMessage`,
+ * otherwise a member sitting in a call would never be allowed message XP (that field is
+ * the chat cooldown timestamp).
+ */
+export const addXp = wrapServiceBoundary(async function addXp(client, guild, member, xpToAdd, options = {}) {
   const lockKey = `leveling:${guild.id}:${member.user.id}`;
   return await Mutex.runExclusive(lockKey, async () => {
     if (!xpToAdd || xpToAdd <= 0) {
@@ -28,7 +33,9 @@ export const addXp = wrapServiceBoundary(async function addXp(client, guild, mem
 
     levelData.xp += xpToAdd;
     levelData.totalXp += xpToAdd;
-    levelData.lastMessage = Date.now();
+    if (options?.source !== 'voice') {
+      levelData.lastMessage = Date.now();
+    }
 
     let xpNeededForNextLevel = getXpForLevel(levelData.level);
     let didLevelUp = false;

@@ -1,4 +1,5 @@
 import { logger } from '../utils/logger.js';
+import { Mutex } from '../utils/mutex.js';
 
 const COUNTING_GAME_KEY_PREFIX = 'countingGame:';
 
@@ -169,6 +170,12 @@ const COUNTING_SYSTEMS = {
   },
 };
 
+const DEFAULT_MAX_SAVES = 3;
+const MAX_SAVES_LIMIT = 5;
+const SAVE_EARNED_EVERY = 100;
+const MILESTONE_EVERY = 100;
+const NOTICE_LIFETIME_MS = 10000;
+
 const DEFAULT_COUNTING_GAME = {
   enabled: false,
   channelId: null,
@@ -177,8 +184,21 @@ const DEFAULT_COUNTING_GAME = {
   lastUserId: null,
   currentStreak: 0,
   bestStreak: 0,
+  highScore: 0,
   leaderboard: {},
+  ruins: {},
+  // When false (default) normal chat in the counting channel is ignored.
+  // When true every message in the channel must be the next number.
+  strict: false,
+  // Shared "lives": a mistake uses one save instead of resetting the count.
+  saves: DEFAULT_MAX_SAVES,
+  maxSaves: DEFAULT_MAX_SAVES,
 };
+
+function clampSaves(value, max) {
+  const number = Number.isFinite(Number(value)) ? Math.floor(Number(value)) : 0;
+  return Math.min(Math.max(number, 0), max);
+}
 
 function normalizeCountingGame(state) {
   const normalized = {
@@ -190,6 +210,13 @@ function normalizeCountingGame(state) {
   normalized.leaderboard = normalized.leaderboard && typeof normalized.leaderboard === 'object'
     ? { ...normalized.leaderboard }
     : {};
+  normalized.ruins = normalized.ruins && typeof normalized.ruins === 'object'
+    ? { ...normalized.ruins }
+    : {};
+  normalized.strict = Boolean(normalized.strict);
+  normalized.maxSaves = clampSaves(normalized.maxSaves, MAX_SAVES_LIMIT);
+  normalized.saves = clampSaves(normalized.saves, normalized.maxSaves);
+  normalized.highScore = Math.max(Number(normalized.highScore) || 0, 0);
 
   return normalized;
 }
@@ -229,21 +256,52 @@ export async function resetCountingGame(client, guildId, startNumber = 1) {
   });
 }
 
-export async function recordCorrectCount(client, guildId, userId) {
-  const config = await getCountingGameConfig(client, guildId);
+/** Admin settings: `strict` and `maxSaves` (saves are topped up to the new max). */
+export async function updateCountingSettings(client, guildId, { strict, maxSaves } = {}) {
+  return Mutex.runExclusive(`counting:${guildId}`, async () => {
+    const config = await getCountingGameConfig(client, guildId);
+    const next = { ...config };
+    if (typeof strict === 'boolean') next.strict = strict;
+    if (Number.isInteger(maxSaves)) {
+      next.maxSaves = clampSaves(maxSaves, MAX_SAVES_LIMIT);
+      next.saves = next.maxSaves;
+    }
+    return saveCountingGameConfig(client, guildId, next);
+  });
+}
+
+/** Pure helper: returns the next state after a correct count by `userId`. */
+export function applyCorrectCount(config, userId) {
+  const counted = config.nextNumber || 1;
   const leaderboard = { ...config.leaderboard };
   leaderboard[userId] = (leaderboard[userId] || 0) + 1;
 
-  const updatedConfig = {
+  const currentStreak = (config.currentStreak || 0) + 1;
+  const earnedSave = counted % SAVE_EARNED_EVERY === 0 && config.saves < config.maxSaves;
+
+  const updated = {
     ...config,
     leaderboard,
     lastUserId: userId,
-    currentStreak: (config.currentStreak || 0) + 1,
-    bestStreak: Math.max(config.bestStreak || 0, (config.currentStreak || 0) + 1),
-    nextNumber: (config.nextNumber || 1) + 1,
+    currentStreak,
+    bestStreak: Math.max(config.bestStreak || 0, currentStreak),
+    highScore: Math.max(config.highScore || 0, counted),
+    nextNumber: counted + 1,
+    saves: earnedSave ? config.saves + 1 : config.saves,
   };
 
-  return saveCountingGameConfig(client, guildId, updatedConfig);
+  return {
+    config: updated,
+    counted,
+    earnedSave,
+    isMilestone: counted % MILESTONE_EVERY === 0,
+  };
+}
+
+export async function recordCorrectCount(client, guildId, userId) {
+  const config = await getCountingGameConfig(client, guildId);
+  const { config: updated } = applyCorrectCount(config, userId);
+  return saveCountingGameConfig(client, guildId, updated);
 }
 
 export function getCountingSystemChoices() {
@@ -278,8 +336,31 @@ export function isValidCountingMessage(content, config) {
   return trimmed === expected;
 }
 
+const ATTEMPT_PATTERNS = {
+  decimal: /^[0-9]+$/,
+  hexadecimal: /^[0-9a-f]+$/i,
+  binary: /^[01]+$/,
+  base36: /^[0-9a-z]+$/i,
+  base64: /^[A-Za-z0-9+/]+=*$/,
+  roman: /^[ivxlcdm]+$/i,
+  alphabet: /^[a-z]+$/i,
+  math: /^[0-9(][0-9+\-*/^().=\s]*$/,
+};
+
+/**
+ * In non-strict mode, only messages that look like an attempt at a number in
+ * the active system can break the count. Everything else is just chat.
+ */
+export function looksLikeCountAttempt(content, config) {
+  const trimmed = String(content ?? '').trim();
+  if (!trimmed) return false;
+  const pattern = ATTEMPT_PATTERNS[config.system] || ATTEMPT_PATTERNS.decimal;
+  return pattern.test(trimmed);
+}
+
 export async function activateCountingGame(client, guildId, channelId, system = 'decimal') {
   const normalizedSystem = COUNTING_SYSTEMS[system] ? system : 'decimal';
+  const previous = await getCountingGameConfig(client, guildId);
   const config = normalizeCountingGame({
     enabled: true,
     channelId,
@@ -288,13 +369,19 @@ export async function activateCountingGame(client, guildId, channelId, system = 
     lastUserId: null,
     currentStreak: 0,
     bestStreak: 0,
+    highScore: 0,
     leaderboard: {},
+    ruins: {},
+    // Keep the admin's earlier settings when a game is set up again.
+    strict: previous.strict,
+    maxSaves: previous.maxSaves,
+    saves: previous.maxSaves,
   });
 
   return saveCountingGameConfig(client, guildId, config);
 }
 
-export function buildCountingLeaderboard(config, guild) {
+export function buildCountingLeaderboard(config) {
   const entries = Object.entries(config.leaderboard || {});
   if (entries.length === 0) {
     return [];
@@ -304,8 +391,113 @@ export function buildCountingLeaderboard(config, guild) {
     .sort((a, b) => b[1] - a[1])
     .slice(0, 10)
     .map(([userId, count], index) => {
-      const member = guild?.members?.cache?.get(userId);
-      const username = member ? `${member.user.username}#${member.user.discriminator}` : `<@${userId}>`;
-      return `**${index + 1}.** ${username} — ${count} ${count === 1 ? 'count' : 'counts'}`;
+      const medal = ['🥇', '🥈', '🥉'][index] || `**${index + 1}.**`;
+      return `${medal} <@${userId}> — ${count} ${count === 1 ? 'count' : 'counts'}`;
     });
+}
+
+export function getUserCountingStats(config, userId) {
+  const correct = config.leaderboard?.[userId] || 0;
+  const ruins = config.ruins?.[userId] || 0;
+  const ranked = Object.entries(config.leaderboard || {}).sort((a, b) => b[1] - a[1]);
+  const position = ranked.findIndex(([id]) => id === userId);
+  const attempts = correct + ruins;
+
+  return {
+    correct,
+    ruins,
+    rank: position === -1 ? null : position + 1,
+    totalPlayers: ranked.length,
+    accuracy: attempts === 0 ? null : Math.round((correct / attempts) * 1000) / 10,
+  };
+}
+
+function sendTemporaryNotice(channel, content) {
+  channel
+    .send(content)
+    .then((notice) => {
+      const timer = setTimeout(() => notice.delete().catch(() => {}), NOTICE_LIFETIME_MS);
+      if (typeof timer.unref === 'function') timer.unref();
+    })
+    .catch(() => {});
+}
+
+/**
+ * Handles a message posted in a guild. Returns true when the message belonged to the
+ * counting game (so XP and prefix commands should be skipped), false otherwise.
+ * Everything that reads and writes the game state runs inside a per-guild lock so two
+ * people counting at the same moment can't corrupt the sequence.
+ */
+export async function processCountingMessage(client, message) {
+  try {
+    const guildId = message.guild.id;
+
+    const quick = await getCountingGameConfig(client, guildId);
+    if (!quick.enabled || !quick.channelId || message.channel.id !== quick.channelId) {
+      return false;
+    }
+
+    return await Mutex.runExclusive(`counting:${guildId}`, async () => {
+      const config = await getCountingGameConfig(client, guildId);
+      if (!config.enabled || message.channel.id !== config.channelId) {
+        return false;
+      }
+
+      const content = message.content.trim();
+      if (!config.strict && !looksLikeCountAttempt(content, config)) {
+        return false;
+      }
+
+      const userId = message.author.id;
+      const correctNumber = isValidCountingMessage(content, config);
+      const countedTwice = correctNumber && userId === config.lastUserId;
+
+      if (correctNumber && !countedTwice) {
+        const result = applyCorrectCount(config, userId);
+        await saveCountingGameConfig(client, guildId, result.config);
+
+        await message.react('✅').catch(() => {});
+        if (result.isMilestone) {
+          await message.react('💯').catch(() => {});
+          const saveLine = result.earnedSave
+            ? ` A save was earned (**${result.config.saves}/${result.config.maxSaves}**).`
+            : '';
+          await message.channel.send(`🎉 We reached **${result.counted}**!${saveLine}`).catch(() => {});
+        }
+        return true;
+      }
+
+      // Mistake: wrong number, or the same person counting twice in a row.
+      await message.delete().catch(() => {});
+      const ruins = { ...config.ruins, [userId]: (config.ruins[userId] || 0) + 1 };
+      const what = countedTwice ? 'counted twice in a row' : 'got the wrong number';
+
+      if (config.saves > 0) {
+        const saves = config.saves - 1;
+        await saveCountingGameConfig(client, guildId, { ...config, saves, ruins });
+        sendTemporaryNotice(
+          message.channel,
+          `⚠️ <@${userId}> ${what}, but a save kept the count alive! **${saves}/${config.maxSaves}** saves left. Next number: **${getExpectedCountValue(config)}**`,
+        );
+        return true;
+      }
+
+      await saveCountingGameConfig(client, guildId, {
+        ...config,
+        nextNumber: 1,
+        lastUserId: null,
+        currentStreak: 0,
+        ruins,
+      });
+      const lost = config.currentStreak > 0 ? ` The streak of **${config.currentStreak}** is over.` : '';
+      sendTemporaryNotice(
+        message.channel,
+        `❌ <@${userId}> ${what}.${lost} The sequence has been reset to **1**.`,
+      );
+      return true;
+    });
+  } catch (error) {
+    logger.error('Error handling counting game:', error);
+    return false;
+  }
 }
